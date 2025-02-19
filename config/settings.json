@@ -1,0 +1,5 @@
+{
+    "api_url": "http://localhost:3000",
+    "data_file_path": "data/data.json",
+    "data_folder_path": "data"
+}

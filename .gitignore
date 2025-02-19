@@ -1,0 +1,16 @@
+# Exensions
+*.dat
+*.log
+
+# Directories
+save/
+data/
+bin/
+
+# ignore pycache
+__pycache__/
+
+# ignore editor files
+.vscode/
+.idea/
+
