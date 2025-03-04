@@ -49,6 +49,17 @@ class APIHandler:
             return func(self, *args, **kwargs)
         return wrapper
     
+    def check_login(self):
+        # Ping the server at /auth/ping to check if the access token is still valid
+        header = {"Authorization": f"Bearer {self.access_token}"}
+        ping_response = requests.get(f"{self.api_url}/auth/ping", headers=header)
+        if ping_response.status_code == 401:
+            # Access token is invalid, try to refresh it
+            if not self.refresh():
+                # Refresh failed, return False. TODO: raise an exception? Ask the user to log in again?
+                return False
+        return True
+
     ##############################
     # Channel related functions  #
     ##############################
@@ -141,6 +152,9 @@ class APIHandler:
         response = requests.get(f"{self.api_url}/jobs/request", headers=header)
         if response.status_code == 200:
             return response.json()
+        # If the server returns 204, it means there are no jobs available
+        if response.status_code == 204:
+            return None
         print(f"[Error] Failed to get job: {response.text}")
         return None
 
@@ -203,7 +217,18 @@ class APIHandler:
             return response.json()
         print(f"[Error] Failed to update iterations: {response.text}")
         return None
-    
+
+    @ensure_login
+    def update_entropy(self, job_id: int, entropy: float):
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        data = {"job_id": job_id, "entropy": entropy}
+        response = requests.post(f"{self.api_url}/jobs/update-entropy", headers=headers, data = data)
+        if response.status_code == 200:
+            return response.json()
+        print(f"[Error] Failed to update entropy: {response.text}")
+        return None
+ 
+
     @ensure_login
     def get_status(self, job_id: int):
         headers = {"Authorization": f"Bearer {self.access_token}"}

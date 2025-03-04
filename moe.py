@@ -1,51 +1,35 @@
-# Main class for the MOE system
-# import the necessary packages
-from src.worker import Worker
+import curses
 import asyncio
-
-from src.api_handler import APIHandler
-
-
-
-'''
-{   
-    'job_id': 14, 
-    'job_type': 'generate_kraus', 
-    'job_data': {   
-                    'channel_id': 76, 
-                    'number_kraus': 10, 
-                    'input_dimension': 100, 
-                    'output_dimension': 100
-                }, 
-    'job_status': 'running', 
-    'kraus_id': None, 
-    'vector_id': None, 
-    'channel_id': 76
-}
-'''
-
-worker = Worker()
-
-# Log in to the API
-worker.login("client4", "password123")
+# graphics
+from src.canvas import Canvas
+from src.menu import Menu
+from src.menu_element import MenuElement, Spacing, Title, InputField
+from src.gui_element import GUIElement
+# functionality
+from src.worker import worker
+# curses gui elements
+from src.gui import *
 
 
-async def main():
-    pm = worker.process_manager
 
-    # Start consuming stdout and stderr in the background
-    stdout_task = asyncio.create_task(pm.consume_output(pm.stdout_queue))
-    stderr_task = asyncio.create_task(pm.consume_output(pm.stderr_queue))
+def run_curses():
+    """Run curses with asyncio support"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    curses.wrapper(lambda stdscr: loop.run_until_complete(update_screen(stdscr)))
 
-    # Run your async worker while consuming logs
-    await worker.run()
 
-    # Stop consuming output by sending a sentinel (None)
-    await pm.stdout_queue.put(None)
-    await pm.stderr_queue.put(None)
+def main():
+    """Manages curses and background task cleanly"""
+    loop = asyncio.new_event_loop()
+    curses.wrapper(lambda stdscr: loop.run_until_complete(update_screen(stdscr)))
+    # Start the background worker task
 
-    # Wait for background tasks to finish
-    await stdout_task
-    await stderr_task
 
-asyncio.run(main())
+
+# Main entry point
+if __name__ == "__main__":
+    main()
+
+
+

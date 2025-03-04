@@ -1,20 +1,50 @@
 from src.api_handler import APIHandler
 from src.process_manager import ProcessManager
+
 import asyncio
+import json
+import datetime
+import re
 from dataclasses import dataclass
 from os import makedirs
 from pathlib import Path
-import json
+from collections import deque
+
+class AsyncDeque:
+    def __init__(self, maxsize=10):
+        self.deque = deque(maxlen=maxsize)
+        self.lock = asyncio.Lock()
+
+    async def add(self, item):
+        """Safely add an item to the deque."""
+        async with self.lock:
+            self.deque.append(item)
+
+    async def get_last(self, index=0):
+        """Safely get an item (default: most recent)"""
+        async with self.lock:
+            if len(self.deque) > index:
+                return self.deque[-(index+1)]  # -1 is last, -2 is second last, etc.
+            return "n/a"
+
+    async def get_all(self):
+        """Safely get all items as a list"""
+        async with self.lock:
+            return list(self.deque)
 
 @dataclass
 class WorkerConfig():
     api_url: str = "http://localhost:8000"
 
     # Paths
-    data_folder = "./data"
-    in_subfolder = "input"
-    out_subfolder = "output"
-    db = "moe.json"
+    data_folder : str = "./data"
+    in_subfolder : str = "input"
+    out_subfolder : str = "output"
+    db : str = "moe.json"
+    
+    commands_stored : int = 10
+
+    ping_interval : int = 10
 
 
 class Worker():
@@ -51,6 +81,7 @@ class Worker():
         # Initialize the variables
         self.running = False
         self.has_job = False
+        self.stopped = False
 
         self.job_id = None
         self.job_type = None
@@ -61,13 +92,34 @@ class Worker():
         self.number_kraus = None
         self.input_dimension = None
         self.output_dimension = None
+        # These are also used to update the server!
+        self.current_entropy = None
+        self.current_iterations = 0
 
+
+        # These are used to display info to the gui
+        # TIMESTAMPS
+        self.last_checked = None
+        self.logged_in = False
+        self.username = None
+        # CONSOLE OUTPUTS
+        self.last_commands = AsyncDeque(maxsize=config.commands_stored)
 
 
     def login(self, uid: str, pwd: str):
-        return self.api_handler.login(uid,pwd)
-
+        self.logged_in = self.api_handler.login(uid,pwd)
+        if self.logged_in:
+            self.username = uid
+        return self.logged_in
+    
+    def is_logged_in(self):
+        # if the last check was too long ago, check again
+        if not self.last_checked or (datetime.datetime.now() - self.last_checked).seconds > self.config.ping_interval:
+            self.logged_in = self.api_handler.check_login()
+            self.last_checked = datetime.datetime.now()
         
+        return self.logged_in
+
     def get_job(self):
         job_dic = self.api_handler.get_job()
         # Check if we got a job
@@ -85,15 +137,24 @@ class Worker():
             self.number_kraus = job_dic["job_data"]["number_kraus"]
             self.input_dimension = job_dic["job_data"]["input_dimension"]
             self.output_dimension = job_dic["job_data"]["output_dimension"]
+        elif self.job_type == "generate_vector":
+            self.input_dimension = job_dic["job_data"]["input_dimension"]
+            self.channel_id = job_dic["job_data"]["channel_id"]
+        elif self.job_type == "minimize":
+            self.channel_id = job_dic["job_data"]["channel_id"]
+            self.number_kraus = job_dic["job_data"]["number_kraus"]
+            self.input_dimension = job_dic["job_data"]["input_dimension"]
+            self.output_dimension = job_dic["job_data"]["output_dimension"]
         
         # Signal that we have a job
         self.has_job = True
+        # update last check
+        self.last_checked = datetime.datetime.now()
         return True
 
     def handle_file_download(self):
         # Get the necessary files for the job, if any. This is only relevant for minimization jobs, where both the vector and the kraus operators need to be specified.
         if self.job_type == "minimize":
-            print("Have a minimization job")
             if not self.vector_file_id or not self.kraus_file_id:
                 print(f"[Error] Missing vector or kraus file")
                 return False
@@ -233,8 +294,17 @@ class Worker():
             if not fl:
                 print(f"[Error] Failed to upload vector file")
                 return False
-            # Update the number of iterations. For now use a dummy value
-            fl = self.api_handler.update_iterations(self.job_id, 1)
+            # Update the number of iterations.
+            if self.current_iterations > 0:
+                fl = self.api_handler.update_iterations(self.job_id, self.current_iterations)
+                if not fl:
+                    print(f"[Error] Failed to update iterations")
+                    return
+            # Update the entropy value
+            if self.current_entropy:
+                fl = self.api_handler.update_entropy(self.job_id, self.current_entropy)
+                if not fl:
+                    print(f"[Error] Failed to update entropy")
             # Update the job status
             fl = self.api_handler.complete_job(self.job_id)
             if not fl:
@@ -247,16 +317,90 @@ class Worker():
             
 
         return True
+    
+
+    async def parse_line(self, line):
+        # add line to queue
+        await self.last_commands.add(line)
+        # check if the line contains the entropy value of the current iteration
+        # Regex pattern
+        pattern = r"\[\s*Iteration\s*(\d+)\s*\].*Entropy:\s*([\d\.]+)"
+        # Find matches
+        match = re.search(pattern, line)
+        # debug
+        # If we have a match, extract the values
+        if match:
+            self.current_iterations = int(match.group(1))  # Extracted iteration number
+            self.current_entropy = float(match.group(2))     # Extracted entropy value
+    
+
+
+    async def consume_output(self, queue):
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=1.0)  # Avoid waiting forever
+            except asyncio.TimeoutError:
+                continue
+
+
+            if item is None:
+                break  # Stop on sentinel
+
+            await self.parse_line(item)
+            await asyncio.sleep(0)
+
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.stopped = False
+
+            loop = asyncio.get_event_loop()
+            bg_task = loop.create_task(self.worker_main())
+
+    def pause(self):
+        self.running = False
+
+    def stop(self):
+        self.running = False
+        self.stopped = True
+
+# function to run the worker
+    async def worker_main(self):
+        # Start consuming stdout and stderr in the background
+        #stdout_task = asyncio.create_task(pm.consume_output(pm.stdout_queue))
+        #stderr_task = asyncio.create_task(pm.consume_output(pm.stderr_queue))
+
+        parse_task = asyncio.create_task(self.consume_output(self.process_manager.stdout_queue))
+
+        # Run your async worker while consuming logs
+        await asyncio.create_task(worker.run())
+
+
+        # Stop consuming output by sending a sentinel (None)
+        await self.process_manager.stdout_queue.put(None)
+        #await pm.stderr_queue.put(None)
+
+        # Wait for background tasks to finish
+        await parse_task
+        #await stderr_task
+
+
 
     async def run(self):
         while True:
-            if not self.has_job:
-                # Get a new job
-                if not self.get_job():
-                    print("No jobs found")
+            if self.running:
+                if not self.has_job:
+                    # Get a new job
+                    if not self.get_job():
+                        await asyncio.sleep(1)
+                        continue
+                else:
+                    # Run the job
+                    await self.run_job()
                     await asyncio.sleep(1)
-                    continue
-            else:
-                # Run the job
-                await self.run_job()
-                await asyncio.sleep(1)
+            if self.stopped:
+                break
+
+
+
+worker = Worker()

@@ -1,0 +1,56 @@
+=====================================================
+   ___                _              _  _ _         
+  / _ \ _  _ __ _ _ _| |_ _  _ _ __ | || (_)_ _____ 
+ | (_) | || / _` | ' \  _| || | '  \| __ | \ V / -_)
+  \__\_\\_,_\__,_|_||_\__|\_,_|_|_|_|_||_|_|\_/\___|
+                                                    
+=====================================================
+
+Server Status: [Online/Offline] [Reconnecting... /Reconnecting in *** s]
+Local Status: [Logged In/Logged Out/Running/Stopped]
+
+----------------------------------------
+| Job Overview                         |
+|--------------------------------------|
+| Job ID: [Job ID]                     |
+| Status: [Running/Completed/Failed]   |
+| Progress: [XX%]                      |
+----------------------------------------
+
+Last Command Output: [Output Here]
+
+----------------------------------------
+| Stats                                |
+|--------------------------------------|
+| Jobs Completed: [XX]                 |
+| Jobs Failed: [XX]                    |
+| Jobs Running: [XX]                   |
+----------------------------------------
+
+> [Enter Command Here]
+
+
+
+
+=====================================================
+   ___                _              _  _ _         
+  / _ \ _  _ __ _ _ _| |_ _  _ _ __ | || (_)_ _____ 
+ | (_) | || / _` | ' \  _| || | '  \| __ | \ V / -_)
+  \__\_\\_,_\__,_|_||_\__|\_,_|_|_|_|_||_|_|\_/\___|
+                                                    
+=====================================================
+
+=====================================================
+                Welcome to QuantumHive
+=====================================================
+
+QuantumHive is used to find a numerical estimate for the minimal output entropy (MOE) of quantum channels channels.
+
+You are currently running the QuantumHive worker. Thank you! You will help complete jobs, which are managed by a central server. This way, large computations can be broken down into more manageable chunks.
+
+Please ensure you are logged in. If you are unsure if you have a user, please get in touch with the creator. If you need a job completed, also get in touch.
+
+Happy computing!
+=====================================================
+
+> [Enter command here]
