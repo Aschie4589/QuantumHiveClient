@@ -13,6 +13,8 @@ class ProcessManager():
         self.printing = True
         self.stdout_queue = asyncio.Queue()
         self.stderr_queue = asyncio.Queue()
+
+        self.process = None
     
     def check_executable(self):
         if not os.path.exists(self.executable_path):
@@ -36,7 +38,7 @@ class ProcessManager():
             command.append("-l")
         return await self.run_process(command)
 
-    async def run_singleshot_minimization(self, output_path: str, vector_path: str, kraus_path: str, predict: bool = False, target_entropy: float = -1.0, iterations: int = 0):
+    async def run_singleshot_minimization(self, output_path: str, vector_path: str, kraus_path: str, predict: bool = False, target_entropy: float = -1.0, iterations: int = 0, checkpointing: bool = False, checkpoint_path: str = "./checkpoint.dat", checkpoint_interval: int = 100):
         command = [self.executable_path, "singleshot", "-v", vector_path, "-k", kraus_path, "-S","-o", output_path]
         if predict and target_entropy > 0:
             command.append("-p")
@@ -45,6 +47,14 @@ class ProcessManager():
         if iterations > 0:
             command.append("-i")
             command.append(str(iterations))
+        if checkpointing:
+            command.append("-c")
+            if checkpoint_path:
+                command.append("-cf")
+                command.append(checkpoint_path)
+            if checkpoint_interval > 0:
+                command.append("-ci")
+                command.append(str(checkpoint_interval))
         if not self.printing:
             command.append("-s")
         if self.logging:
@@ -52,18 +62,19 @@ class ProcessManager():
         return await self.run_process(command)
 
     async def run_process(self, command: list):
-      # Start the subprocess asynchronously
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        ) # the await simply waits for the process to be created
+        # Start the subprocess asynchronously
+        if not self.process:
+            self.process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            ) # the await simply waits for the process to be created
 
     # Asynchronously read stdout and stderr and put them into
     # the respective queues
         async def read_output():
             while True:
-                line = await process.stdout.readline()
+                line = await self.process.stdout.readline()
                 if not line:  # EOF
                     break
                 line_decoded = line.decode('utf-8').rstrip()
@@ -71,7 +82,7 @@ class ProcessManager():
 
         async def read_error():
             while True:
-                line = await process.stderr.readline()
+                line = await self.process.stderr.readline()
                 if not line:  # EOF
                     break
                 line_decoded = line.decode('utf-8').rstrip()
@@ -81,15 +92,16 @@ class ProcessManager():
         await asyncio.gather(read_output(), read_error())
 
         # Wait for the process to finish and get the return code
-        return_code = await process.wait()
+        return_code = await self.process.wait()
+        # reset the process
+        self.process = None
+
+        # return the result
         if return_code != 0:
             return False, None, f"Process failed with return code {return_code}"
-
         return True, "Process completed successfully", None
     
-    async def consume_output(self, queue: asyncio.Queue):
-        while True:
-            line = await queue.get()
-            if line is None:  # We use None as a sentinel to stop the loop
-                break
-            print(f"Real-time output: {line}")  # Do whatever you want with the output
+    def stop_process(self):
+        # Just send sigterm to the process, it should handle it
+        if self.process:
+            self.process.terminate()

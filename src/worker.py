@@ -45,7 +45,7 @@ class WorkerConfig():
     commands_stored : int = 10
 
     ping_interval : int = 10
-
+    job_ping_interval : int = 30
 
 class Worker():
     def __init__(self, config: WorkerConfig = WorkerConfig()):
@@ -78,10 +78,10 @@ class Worker():
         else:
             self.db = dict()
 
-        # Initialize the variables
-        self.running = False
-        self.has_job = False
-        self.stopped = False
+        # Initialize the flags and variables
+        self.running = False # Flag to indicate if the worker is running
+        self.has_job = False # Flag to indicate if the worker has a job
+        self.stopped = False # Flag to indicate if the worker has been stopped (not just paused)
 
         self.job_id = None
         self.job_type = None
@@ -95,7 +95,8 @@ class Worker():
         # These are also used to update the server!
         self.current_entropy = None
         self.current_iterations = 0
-
+        # Background task
+        self.task = None
 
         # These are used to display info to the gui
         # TIMESTAMPS
@@ -349,13 +350,25 @@ class Worker():
             await self.parse_line(item)
             await asyncio.sleep(0)
 
+    async def ping_server(self):
+
+        while not self.stopped:
+            # check that we have a job
+            if self.running and self.has_job:
+                # if that is the case, ping the server
+                self.api_handler.ping_job(self.job_id)
+
+            await asyncio.sleep(self.config.job_ping_interval)
+        
+
+
     def start(self):
         if not self.running:
             self.running = True
             self.stopped = False
 
             loop = asyncio.get_event_loop()
-            bg_task = loop.create_task(self.worker_main())
+            self.task = loop.create_task(self.worker_main())
 
     def pause(self):
         self.running = False
@@ -363,26 +376,27 @@ class Worker():
     def stop(self):
         self.running = False
         self.stopped = True
+        #Actually stop the running processes from the process manager
+        print("Stopping the running process...")
+        self.process_manager.stop_process()
 
 # function to run the worker
     async def worker_main(self):
-        # Start consuming stdout and stderr in the background
-        #stdout_task = asyncio.create_task(pm.consume_output(pm.stdout_queue))
-        #stderr_task = asyncio.create_task(pm.consume_output(pm.stderr_queue))
 
-        parse_task = asyncio.create_task(self.consume_output(self.process_manager.stdout_queue))
+        parse_task = asyncio.create_task(self.consume_output(self.process_manager.stdout_queue)) # This task will run in the background, consuming the output of the process
+        ping_task = asyncio.create_task(self.ping_server()) # This task will run in the background, pinging the server every 30 seconds
 
-        # Run your async worker while consuming logs
+        # Run the async worker
         await asyncio.create_task(worker.run())
 
+        # Wait for the pinging task to finish (it will since worker has stopped)
+        await ping_task
 
         # Stop consuming output by sending a sentinel (None)
         await self.process_manager.stdout_queue.put(None)
-        #await pm.stderr_queue.put(None)
 
         # Wait for background tasks to finish
         await parse_task
-        #await stderr_task
 
 
 
@@ -399,6 +413,44 @@ class Worker():
                     await self.run_job()
                     await asyncio.sleep(1)
             if self.stopped:
+                # The running process is already stopped in the self.stop method, otherwise we never exit run_job().
+                # Either run_job was running non minimizing tasks, in which case it finished running normally, or it was running a minimization task, in which case it was stopped by the stop method.
+                # If minimization was running, we should update the server with the current vector and info, then cancel the job so the server can reassign it.
+                if self.job_type == "minimize":
+                    # Assume that self.job_id is still set
+                    # get upload link
+                    upload_link = self.api_handler.request_upload_link()
+                    if not upload_link:
+                        print(f"[Error] Failed to get upload link")
+                        return False
+                    # Upload the vector file
+                    # Search for the file in the db
+                    file = self.db["out_files"].get(self.job_id)
+                    if not file:
+                        print(f"[Error] File not found in db")
+                        return False
+                    fl = self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
+                    if not fl:
+                        print(f"[Error] Failed to upload vector file")
+                        return False
+                    # Update the number of iterations.
+                    if self.current_iterations > 0:
+                        fl = self.api_handler.update_iterations(self.job_id, self.current_iterations)
+                        if not fl:
+                            print(f"[Error] Failed to update iterations")
+                            return
+                    # Update the entropy value
+                    if self.current_entropy:
+                        fl = self.api_handler.update_entropy(self.job_id, self.current_entropy)
+                        if not fl:
+                            print(f"[Error] Failed to update entropy")
+                    # Update the job status to pending, so it can be resumed later
+                    fl = self.api_handler.cancel_job(self.job_id)
+                    if not fl:
+                        print(f"[Error] Failed to update job status")
+                        return False                
+
+
                 break
 
 

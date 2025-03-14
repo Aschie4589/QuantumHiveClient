@@ -86,6 +86,24 @@ class Title(MenuElement):
     def execute(self):
         pass
 
+class Text(MenuElement):
+    def __init__(self, text):
+        self.text = text
+        self.template_text = text
+        self.selectable = False
+
+    def handle_input(self, key):
+        return None
+
+    def __str__(self):
+        return self.text
+
+    def __repr__(self):
+        return self.text
+
+    def execute(self):
+        pass
+
 class InputField(MenuElement):
     def __init__(self, text, hidden=False, shown_input_characters=10):
         self.text = text
