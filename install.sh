@@ -6,9 +6,9 @@ install_system_dependencies() {
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         # For Linux-based systems
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip curl git
-        sudo apt-get install -y libopenblas-dev liblapack-dev # For OpenBLAS
+        apt-get update
+        apt-get install -y python3 python3-pip curl git
+        apt-get install -y libopenblas-dev liblapack-dev # For OpenBLAS
 
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         # For macOS
