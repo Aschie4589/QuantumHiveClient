@@ -5,10 +5,12 @@ from src.menu_element import MenuElement, Spacing, Title, InputField, Text
 from src.gui_element import GUIElement
 # Functionality
 from src.worker import worker
+from src.api_handler import CursesError
 # Library
 import asyncio
 import curses
 import datetime 
+
 
 # This file contains the main loop for the curses GUI. It is responsible for rendering the GUI and handling input.
 # The GUI is composed of a banner, a menu, and a GUI element. The menu is a list of MenuElements, which can be selected with the arrow keys.
@@ -48,6 +50,9 @@ def toggle_menu():
     global show_menu
     show_menu = not show_menu
 
+def menu_show():
+    global show_menu
+    show_menu = True
 ######################################
 #           MENU SECTION             #
 ######################################
@@ -73,13 +78,13 @@ login_btn = MenuElement("Log in", links=login_menu)
 def logout_action():
     global menu
     menu = logged_out_menu
-    worker.api_handler.access_token = None
-    worker.api_handler.refresh_token = None
+    worker.api_handler.access_token = ""
+    worker.api_handler.refresh_token = ""
     worker.username = None
     worker.logged_in = False
-def login_action():
+async def login_action():
     global menu
-    if worker.login(username_field.input, password_field.input):
+    if await worker.login(username_field.input, password_field.input):
         menu = logged_in_menu_running if worker.running else logged_in_menu_not_running
         login_button.links = login_success_popup
     else:
@@ -166,6 +171,13 @@ worker_started_popup.add_element(MenuElement("Ok", links= lambda: menu))
 worker_stopped_popup.add_element(Title("Worker stopped!"))
 worker_stopped_popup.add_element(Spacing())
 worker_stopped_popup.add_element(MenuElement("Ok", links= lambda: menu))
+# error popup
+error_popup = Menu()
+error_popup.add_element(Title("An error occurred!"))
+error_popup.add_element(Spacing())
+error_popup.add_element(Title("%error%"))
+error_popup.add_element(MenuElement("Ok", links= lambda: menu, action=lambda: toggle_menu()))
+
 
 
 ######################################
@@ -215,6 +227,10 @@ command_gui.add_element(Spacing())
 command_gui.add_element(Title(f"%update1%"))
 command_gui.add_element(Title(f"%update2%"))
 command_gui.add_element(Title(f"%update3%"))
+
+# api handler gui
+api_handler_gui = GUIElement(max_width=100, max_heigh=100)
+
 
 
 
@@ -280,7 +296,7 @@ async def update_screen(stdscr):
                 screen.replace(help_canvas, 1, height-2)        
             
             # select the current gui and menus depending on login status
-            if worker.is_logged_in():
+            if await worker.is_logged_in():
                 if worker.running:
                     menu = logged_in_menu_running
                 else:
@@ -347,6 +363,23 @@ async def update_screen(stdscr):
             ll = stats_gui_canvas.width + job_gui_canvas.width + 3
             screen.replace(command_gui_canvas, ll, 13)
             
+            api_handler_gui.reset_texts()
+            api_handler_gui.replace_text_occurences(f"%text%", worker.api_handler.status)
+
+            api_handler_gui.elements = []
+            api_handler_gui.add_element(Title("API Handler status"))
+            api_handler_gui.add_element(Spacing())
+
+            api_handler_gui.add_text(worker.api_handler.status, border=True)
+
+
+
+
+            api_handler_gui_canvas = api_handler_gui.to_canvas(border=True)
+            lll = stats_gui_canvas.width + job_gui_canvas.width + command_gui_canvas.width + 4
+            screen.replace(api_handler_gui_canvas, lll, 13)
+            
+
             very_long_text_gui_canvas = welcome_message_gui.to_canvas(border=False)
             #screen.replace(very_long_text_gui_canvas, 1, 8)
 
@@ -369,7 +402,7 @@ async def update_screen(stdscr):
                     elif key == ord("q"):
                         raise KeyboardInterrupt()
                 if show_menu:
-                    current_menu = current_menu.handle_input(key)
+                    current_menu = await current_menu.handle_input(key)
             except KeyboardInterrupt:
                 # Exit the program
                 # Await the worker to finish
@@ -393,3 +426,14 @@ async def update_screen(stdscr):
             await asyncio.sleep(0.05)  # Non-blocking sleep
         except curses.error:
             pass
+
+        except CursesError as e:
+            # Add a popup for the error
+            error_popup.reset_texts()
+            error_popup.replace_text_occurences(f"%error%", e.message)
+            current_menu = error_popup
+            menu_show()
+
+            continue
+
+

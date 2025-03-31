@@ -1,4 +1,5 @@
 import curses
+import asyncio
 
 class MenuElement:
     def __init__(self, text, action=None, links=None):
@@ -9,12 +10,12 @@ class MenuElement:
         self.selectable = True
         self.selected = False
 
-    def handle_input(self, key):
+    async def handle_input(self, key):
         # Returns the action if it is not callable = it is a submenu
         # Returns None if the action is callable
         # Enter key
         if key in (curses.KEY_ENTER, 10, 13):
-            return self.execute()
+            return await self.execute()
         return None
 
     def __str__(self):
@@ -29,13 +30,19 @@ class MenuElement:
     def deselect(self):
         self.selected = False
 
-    def execute(self):
+    async def execute(self):
         # if it is callable, call it
         if callable(self.action):
-            self.action()
+            # if awaitable, await it
+            if asyncio.iscoroutinefunction(self.action):
+                await self.action()
+            else:
+                self.action()
 
         if self.links:
-            # this should be updated dynamically. I.e. sometimes links will be a lambda; in that case the lambda returns the submenu
+            # this should be updated dynamically. 
+            # I.e. sometimes links will be a lambda; in that case the lambda returns the submenu
+            # Never awaitable
             if callable(self.links):
                 self.links().reset_cursor()
                 return self.links()
@@ -56,7 +63,7 @@ class Spacing(MenuElement):
         self.text = ""
         self.selectable = False
 
-    def handle_input(self, key):
+    async def handle_input(self, key):
         return None
 
     def __str__(self):
@@ -65,7 +72,7 @@ class Spacing(MenuElement):
     def __repr__(self):
         return ""
 
-    def execute(self):
+    async def execute(self):
         pass
 
 class Title(MenuElement):
@@ -74,7 +81,7 @@ class Title(MenuElement):
         self.template_text = text
         self.selectable = False
 
-    def handle_input(self, key):
+    async def handle_input(self, key):
         return None
 
     def __str__(self):
@@ -83,7 +90,7 @@ class Title(MenuElement):
     def __repr__(self):
         return self.text
 
-    def execute(self):
+    async def execute(self):
         pass
 
 class Text(MenuElement):
@@ -92,7 +99,7 @@ class Text(MenuElement):
         self.template_text = text
         self.selectable = False
 
-    def handle_input(self, key):
+    async def handle_input(self, key):
         return None
 
     def __str__(self):
@@ -101,7 +108,7 @@ class Text(MenuElement):
     def __repr__(self):
         return self.text
 
-    def execute(self):
+    async def execute(self):
         pass
 
 class InputField(MenuElement):
@@ -115,7 +122,7 @@ class InputField(MenuElement):
         self.input = ""
         self.shown_input_characters = shown_input_characters
 
-    def handle_input(self, key):
+    async def handle_input(self, key):
         if key == 127:  # Backspace
             self.input = self.input[:-1]
         elif key == curses.KEY_DC:  # Delete
@@ -143,6 +150,6 @@ class InputField(MenuElement):
     def __repr__(self):
         return self.text
 
-    def execute(self):
+    async def execute(self):
         pass
 

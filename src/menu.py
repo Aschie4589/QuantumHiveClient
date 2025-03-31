@@ -58,7 +58,7 @@ class Menu:
         self.elements[self.selected].select()
         
 
-    def handle_input(self, key):
+    async def handle_input(self, key):
         if key == curses.KEY_UP:
             self.move_up()
         elif key == curses.KEY_DOWN:
@@ -70,7 +70,7 @@ class Menu:
 
         # other key presses are passed to the selected element
         else:
-            r = self.elements[self.selected].handle_input(key)
+            r = await self.elements[self.selected].handle_input(key)
             if r:
                 return r
         return self  # Stay in the same menu

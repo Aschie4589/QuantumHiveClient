@@ -65,6 +65,11 @@ class Worker():
         makedirs(config.data_folder, exist_ok=True)
         makedirs(self.in_folder, exist_ok=True)
         makedirs(self.out_folder, exist_ok=True)
+        # make sure folders have the right permissions
+        self.data_folder.chmod(0o777)
+        self.in_folder.chmod(0o777)
+        self.out_folder.chmod(0o777)
+        
 
 
         ### Files database ###
@@ -107,22 +112,22 @@ class Worker():
         self.last_commands = AsyncDeque(maxsize=config.commands_stored)
 
 
-    def login(self, uid: str, pwd: str):
-        self.logged_in = self.api_handler.login(uid,pwd)
+    async def login(self, uid: str, pwd: str):
+        self.logged_in = await self.api_handler.login(uid,pwd)
         if self.logged_in:
             self.username = uid
         return self.logged_in
     
-    def is_logged_in(self):
+    async def is_logged_in(self):
         # if the last check was too long ago, check again
         if not self.last_checked or (datetime.datetime.now() - self.last_checked).seconds > self.config.ping_interval:
-            self.logged_in = self.api_handler.check_login()
+            self.logged_in = await self.api_handler.check_login()
             self.last_checked = datetime.datetime.now()
         
         return self.logged_in
 
-    def get_job(self):
-        job_dic = self.api_handler.get_job()
+    async def get_job(self):
+        job_dic = await self.api_handler.get_job()
         # Check if we got a job
         if not job_dic:
             return False
@@ -153,29 +158,29 @@ class Worker():
         self.last_checked = datetime.datetime.now()
         return True
 
-    def handle_file_download(self):
+    async def handle_file_download(self):
         # Get the necessary files for the job, if any. This is only relevant for minimization jobs, where both the vector and the kraus operators need to be specified.
         if self.job_type == "minimize":
             if not self.vector_file_id or not self.kraus_file_id:
                 print(f"[Error] Missing vector or kraus file")
                 return False
             # Download the vector file
-            vectorlink = self.api_handler.request_download_link(self.vector_file_id)
+            vectorlink = await self.api_handler.request_download_link(self.vector_file_id)
             if not vectorlink:
                 print(f"[Error] Failed to get download link for vector file")
                 return False
-            fl = self.api_handler.download_file(vectorlink["download_url"], self.in_folder / f"{self.vector_file_id}_in.dat")
+            fl = await self.api_handler.download_file(vectorlink["download_url"], self.in_folder / f"{self.vector_file_id}_in.dat")
             if not fl:
                 print(f"[Error] Failed to download vector file")
                 return False
             # Add to db. Use setdefault as the keys don't necessarily exist!
             self.db.setdefault("in_files", dict())[self.vector_file_id] = {"type": "vector", "path": str(self.in_folder / f"{self.vector_file_id}_in.dat")}
             # Download the kraus file
-            krauslink = self.api_handler.request_download_link(self.kraus_file_id)
+            krauslink = await self.api_handler.request_download_link(self.kraus_file_id)
             if not krauslink:
                 print(f"[Error] Failed to get download link for kraus file")
                 return False
-            fl = self.api_handler.download_file(krauslink["download_url"], self.in_folder / f"{self.kraus_file_id}_in.dat")
+            fl = await self.api_handler.download_file(krauslink["download_url"], self.in_folder / f"{self.kraus_file_id}_in.dat")
             if not fl:
                 print(f"[Error] Failed to download kraus file")
                 return False
@@ -187,7 +192,7 @@ class Worker():
 
     async def run_job(self):
         # Handle file download
-        self.handle_file_download()
+        await self.handle_file_download()
 
         # Run the job
         if self.job_type == "generate_kraus":
@@ -233,11 +238,11 @@ class Worker():
             self.has_job = False
             return False
 
-         # Upload the results if necessary and update the job status and info
+        # Upload the results if necessary and update the job status and info
         # Case 1: generate_kraus
         if self.job_type == "generate_kraus":
             # get upload link
-            upload_link = self.api_handler.request_upload_link()
+            upload_link = await self.api_handler.request_upload_link()
             if not upload_link:
                 print(f"[Error] Failed to get upload link")
                 return False
@@ -247,19 +252,20 @@ class Worker():
             if not file:
                 print(f"[Error] File not found in db")
                 return False
-            fl = self.api_handler.upload_file(self.job_id, "kraus", Path(file["path"]), upload_link["upload_url"])
+            fl = await self.api_handler.upload_file(self.job_id, "kraus", Path(file["path"]), upload_link["upload_url"])
+            self.api_handler.status = f"Uploaded kraus file: {fl}"
             if not fl:
                 print(f"[Error] Failed to upload kraus file")
                 return False
             # Update the job status
-            fl = self.api_handler.complete_job(self.job_id)
+            fl = await self.api_handler.complete_job(self.job_id)
             if not fl:
                 print(f"[Error] Failed to update job status")
                 return False
         # Case 2: generate_vector
         elif self.job_type == "generate_vector":
             # get upload link
-            upload_link = self.api_handler.request_upload_link()
+            upload_link = await self.api_handler.request_upload_link()
             if not upload_link:
                 print(f"[Error] Failed to get upload link")
                 return False
@@ -269,19 +275,20 @@ class Worker():
             if not file:
                 print(f"[Error] File not found in db")
                 return False
-            fl = self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
+            fl = await self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
+            self.api_handler.status = f"Uploaded vector file: {fl}"
             if not fl:
                 print(f"[Error] Failed to upload vector file")
                 return False
             # Update the job status
-            fl = self.api_handler.complete_job(self.job_id)
+            fl = await self.api_handler.complete_job(self.job_id)
             if not fl:
                 print(f"[Error] Failed to update job status")
                 return False
         # Case 3: minimize
         elif self.job_type == "minimize":
             # get upload link
-            upload_link = self.api_handler.request_upload_link()
+            upload_link = await self.api_handler.request_upload_link()
             if not upload_link:
                 print(f"[Error] Failed to get upload link")
                 return False
@@ -291,23 +298,23 @@ class Worker():
             if not file:
                 print(f"[Error] File not found in db")
                 return False
-            fl = self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
+            fl = await self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
             if not fl:
                 print(f"[Error] Failed to upload vector file")
                 return False
             # Update the number of iterations.
             if self.current_iterations > 0:
-                fl = self.api_handler.update_iterations(self.job_id, self.current_iterations)
+                fl = await self.api_handler.update_iterations(self.job_id, self.current_iterations)
                 if not fl:
                     print(f"[Error] Failed to update iterations")
                     return
             # Update the entropy value
             if self.current_entropy:
-                fl = self.api_handler.update_entropy(self.job_id, self.current_entropy)
+                fl = await self.api_handler.update_entropy(self.job_id, self.current_entropy)
                 if not fl:
                     print(f"[Error] Failed to update entropy")
             # Update the job status
-            fl = self.api_handler.complete_job(self.job_id)
+            fl = await self.api_handler.complete_job(self.job_id)
             if not fl:
                 print(f"[Error] Failed to update job status")
                 return False
@@ -356,7 +363,7 @@ class Worker():
             # check that we have a job
             if self.running and self.has_job:
                 # if that is the case, ping the server
-                self.api_handler.ping_job(self.job_id)
+                await self.api_handler.ping_job(self.job_id)
 
             await asyncio.sleep(self.config.job_ping_interval)
         
@@ -405,7 +412,7 @@ class Worker():
             if self.running:
                 if not self.has_job:
                     # Get a new job
-                    if not self.get_job():
+                    if not await self.get_job():
                         await asyncio.sleep(1)
                         continue
                 else:
@@ -419,7 +426,7 @@ class Worker():
                 if self.job_type == "minimize":
                     # Assume that self.job_id is still set
                     # get upload link
-                    upload_link = self.api_handler.request_upload_link()
+                    upload_link = await self.api_handler.request_upload_link()
                     if not upload_link:
                         print(f"[Error] Failed to get upload link")
                         return False
@@ -429,23 +436,23 @@ class Worker():
                     if not file:
                         print(f"[Error] File not found in db")
                         return False
-                    fl = self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
+                    fl = await self.api_handler.upload_file(self.job_id, "vector", Path(file["path"]), upload_link["upload_url"])
                     if not fl:
                         print(f"[Error] Failed to upload vector file")
                         return False
                     # Update the number of iterations.
                     if self.current_iterations > 0:
-                        fl = self.api_handler.update_iterations(self.job_id, self.current_iterations)
+                        fl = await self.api_handler.update_iterations(self.job_id, self.current_iterations)
                         if not fl:
                             print(f"[Error] Failed to update iterations")
                             return
                     # Update the entropy value
                     if self.current_entropy:
-                        fl = self.api_handler.update_entropy(self.job_id, self.current_entropy)
+                        fl = await self.api_handler.update_entropy(self.job_id, self.current_entropy)
                         if not fl:
                             print(f"[Error] Failed to update entropy")
                     # Update the job status to pending, so it can be resumed later
-                    fl = self.api_handler.cancel_job(self.job_id)
+                    fl = await self.api_handler.cancel_job(self.job_id)
                     if not fl:
                         print(f"[Error] Failed to update job status")
                         return False                
@@ -454,5 +461,7 @@ class Worker():
                 break
 
 
+worker_config = WorkerConfig()
+worker_config.api_url ="http://apiv1.quantum-hive.com"
 
-worker = Worker()
+worker = Worker(worker_config)
